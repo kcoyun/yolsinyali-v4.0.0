@@ -1,0 +1,224 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no" />
+  <title>YolSinyali</title>
+
+  <!-- Leaflet.js -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+
+  <!-- Socket.IO -->
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+
+  <style>
+    * { box-sizing: border-box; }
+    html, body { margin: 0; padding: 0; height: 100%; background: #060810; font-family: 'Segoe UI', sans-serif; }
+
+    #map { position: absolute; inset: 0; z-index: 0; }
+
+    .leaflet-popup-content-wrapper {
+      background: rgba(15,23,42,0.95);
+      color: #e2e8f0;
+      border: 1px solid rgba(59,130,246,0.3);
+      border-radius: 12px;
+      backdrop-filter: blur(8px);
+    }
+    .leaflet-popup-tip { background: rgba(15,23,42,0.95); }
+    .leaflet-control-attribution { background: rgba(6,8,16,0.7) !important; color: #4b5563 !important; }
+    .leaflet-control-zoom a { background: rgba(15,23,42,0.9) !important; color: #93c5fd !important; border-color: rgba(59,130,246,0.3) !important; }
+    .leaflet-control-zoom a:hover { background: rgba(59,130,246,0.2) !important; }
+
+    @keyframes ripple {
+      0% { transform: scale(1); opacity: 0.8; }
+      100% { transform: scale(3.5); opacity: 0; }
+    }
+    .radar-ripple { animation: ripple 1.6s ease-out infinite; }
+
+    @keyframes pulse-dot {
+      0%, 100% { transform: scale(1); }
+      50% { transform: scale(1.15); }
+    }
+    .pulse-dot { animation: pulse-dot 1.4s ease-in-out infinite; }
+
+    .glass {
+      background: rgba(15, 23, 42, 0.85);
+      backdrop-filter: blur(12px);
+      -webkit-backdrop-filter: blur(12px);
+      border: 1px solid rgba(59, 130, 246, 0.2);
+    }
+
+    @keyframes alarm-flash {
+      0%, 100% { box-shadow: 0 0 0 0 rgba(239,68,68,0); }
+      50% { box-shadow: 0 0 24px 8px rgba(239,68,68,0.6); }
+    }
+    .alarm-active { animation: alarm-flash 0.8s ease-in-out infinite; }
+
+    .no-scroll::-webkit-scrollbar { display: none; }
+    .no-scroll { -ms-overflow-style: none; scrollbar-width: none; }
+
+    #login-screen {
+      position: fixed; inset: 0; z-index: 1000;
+      background: linear-gradient(135deg, #060810 0%, #0f172a 50%, #060810 100%);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #login-screen.hidden { display: none; }
+
+    #ui-overlay {
+      display: none;
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 500;
+    }
+    #ui-overlay.visible { display: block; }
+
+    .panel-btn { pointer-events: all; }
+
+    input[type="text"], input[type="url"] {
+      background: rgba(30, 41, 59, 0.9);
+      border: 1px solid rgba(59, 130, 246, 0.3);
+      color: #e2e8f0;
+      outline: none;
+      transition: border-color 0.2s;
+    }
+    input[type="text"]:focus, input[type="url"]:focus {
+      border-color: rgba(59, 130, 246, 0.8);
+    }
+    input::placeholder { color: #475569; }
+  </style>
+</head>
+<body>
+
+<div id="map"></div>
+
+<!-- GİRİŞ EKRANI -->
+<div id="login-screen">
+  <div class="glass rounded-3xl p-8 w-full max-w-sm mx-4 shadow-2xl">
+    <div class="flex flex-col items-center mb-8">
+      <div class="w-16 h-16 rounded-2xl bg-blue-600 flex items-center justify-center mb-4 shadow-lg">
+        <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </div>
+      <h1 class="text-2xl font-bold text-white tracking-tight">YolSinyali</h1>
+      <p class="text-slate-400 text-sm mt-1">Canlı Konum Paylaşımı</p>
+    </div>
+
+    <div class="space-y-4">
+      <div>
+        <label class="block text-slate-300 text-xs font-semibold mb-1.5 uppercase tracking-wider">Kullanıcı Adı</label>
+        <input id="login-username" type="text" placeholder="Adınızı girin"
+          class="w-full rounded-xl px-4 py-3 text-sm" autocomplete="off" />
+      </div>
+      <div>
+        <label class="block text-slate-300 text-xs font-semibold mb-1.5 uppercase tracking-wider">Sunucu URL</label>
+        <input id="login-server-url" type="url" placeholder="http://192.168.1.x:5000"
+          class="w-full rounded-xl px-4 py-3 text-sm font-mono" />
+        <p class="text-slate-500 text-xs mt-1.5">Yerel ağda sunucu adresi (ör: ev WiFi IP'si)</p>
+      </div>
+
+      <button onclick="handleLogin()"
+        class="w-full bg-blue-600 hover:bg-blue-500 active:bg-blue-700 text-white font-semibold py-3 rounded-xl transition-all duration-200 shadow-lg shadow-blue-900/40 mt-2">
+        Başla &amp; Konumu Paylaş
+      </button>
+    </div>
+
+    <p class="text-center text-slate-600 text-xs mt-6">GPS konumunuz şifreli olarak paylaşılır.</p>
+  </div>
+</div>
+
+<!-- UI KATMANI -->
+<div id="ui-overlay">
+
+  <!-- ÜST BAR -->
+  <div class="absolute top-0 left-0 right-0 pointer-events-none">
+    <div class="glass m-3 rounded-2xl px-4 py-2.5 flex items-center justify-between pointer-events-all">
+      <div class="flex items-center gap-2">
+        <div class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot"></div>
+        <span class="text-white font-semibold text-sm" id="topbar-username">—</span>
+        <span class="text-slate-400 text-xs">canlı</span>
+      </div>
+      <div class="flex items-center gap-3">
+        <span class="text-slate-400 text-xs" id="online-count">0 kişi</span>
+        <button onclick="togglePanel('radar-panel')" class="text-blue-400 hover:text-blue-300 transition-colors panel-btn" title="Radar Listesi">
+          <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <circle cx="12" cy="12" r="3" stroke-width="2"/>
+            <path stroke-linecap="round" stroke-width="2" d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8"/>
+            <path stroke-linecap="round" stroke-width="2" d="M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/>
+          </svg>
+        </button>
+        <button onclick="sendSOSWhatsApp()"
+          class="bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg transition-colors panel-btn">
+          SOS
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- RADAR PANELİ -->
+  <div id="radar-panel" class="glass absolute right-3 top-16 w-72 rounded-2xl p-4 pointer-events-all hidden" style="max-height:70vh;overflow-y:auto;">
+    <h2 class="text-white font-bold text-sm mb-3 flex items-center gap-2">
+      <span class="w-2 h-2 rounded-full bg-blue-400 inline-block"></span>
+      Radar Listesi
+    </h2>
+
+    <div class="flex gap-2 mb-3">
+      <input id="friend-input" type="text" placeholder="Kullanıcı adı"
+        class="flex-1 rounded-lg px-3 py-2 text-xs" onkeydown="if(event.key==='Enter') addFriend()" />
+      <button onclick="addFriend()"
+        class="bg-blue-600 hover:bg-blue-500 text-white text-xs px-3 py-2 rounded-lg transition-colors font-semibold">
+        Ekle
+      </button>
+    </div>
+
+    <div class="flex items-center gap-2 mb-3">
+      <span class="text-slate-400 text-xs whitespace-nowrap">Alarm:</span>
+      <input id="alarm-distance" type="range" min="100" max="5000" value="500" step="100"
+        class="flex-1 accent-blue-500" oninput="updateAlarmLabel()" />
+      <span id="alarm-label" class="text-blue-400 text-xs w-14 text-right">500 m</span>
+    </div>
+
+    <div id="friend-list" class="space-y-2 no-scroll">
+      <p class="text-slate-500 text-xs text-center py-4" id="friend-list-empty">
+        Henüz takip edilen arkadaş yok.
+      </p>
+    </div>
+  </div>
+
+  <!-- ALT BUTONLAR -->
+  <div class="absolute bottom-6 left-1/2 -translate-x-1/2 flex gap-3 pointer-events-all">
+    <button onclick="centerOnMe()"
+      class="glass rounded-2xl px-5 py-3 text-white text-sm font-semibold flex items-center gap-2 hover:bg-blue-900/30 transition-colors">
+      <svg class="w-4 h-4 text-blue-400" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 17.93V18a1 1 0 0 0-2 0v1.93A8 8 0 0 1 4.07 13H6a1 1 0 0 0 0-2H4.07A8 8 0 0 1 11 4.07V6a1 1 0 0 0 2 0V4.07A8 8 0 0 1 19.93 11H18a1 1 0 0 0 0 2h1.93A8 8 0 0 1 13 19.93z"/>
+      </svg>
+      Konumuma Git
+    </button>
+
+    <button onclick="sendSOSWhatsApp()"
+      class="glass rounded-2xl px-5 py-3 text-white text-sm font-semibold flex items-center gap-2 bg-green-900/30 hover:bg-green-800/40 transition-colors">
+      <svg class="w-4 h-4 text-green-400" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2zm4.96 13.44c-.2.56-1.16 1.08-1.6 1.14-.4.06-.91.09-1.47-.09-.34-.11-.78-.26-1.33-.51-2.33-1.01-3.85-3.37-3.97-3.53-.11-.16-.93-1.24-.93-2.36 0-1.12.59-1.67.8-1.9.21-.23.46-.29.61-.29l.44.01c.14 0 .33-.05.52.4.19.45.65 1.59.71 1.71.06.11.1.25.02.4-.08.15-.12.24-.24.37-.12.13-.25.28-.36.38-.12.11-.24.23-.1.45.14.22.62.97 1.34 1.57.92.78 1.7 1.02 1.93 1.13.24.12.38.1.52-.06.14-.16.6-.7.76-.94.16-.24.32-.2.54-.12.22.08 1.4.66 1.64.78.24.12.4.18.46.28.06.1.06.58-.14 1.14z"/>
+      </svg>
+      WhatsApp SOS
+    </button>
+  </div>
+
+  <!-- YAKINILIK ALARM BANNER -->
+  <div id="alarm-banner" class="hidden absolute top-1/3 left-4 right-4 glass rounded-2xl p-4 text-center alarm-active pointer-events-all">
+    <p class="text-red-400 font-bold text-sm" id="alarm-text">⚠️ Arkadaşın yakında!</p>
+    <button onclick="dismissAlarm()" class="text-slate-400 text-xs mt-1.5 hover:text-white transition-colors">Kapat</button>
+  </div>
+
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
