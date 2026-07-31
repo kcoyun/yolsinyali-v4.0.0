@@ -1,0 +1,5 @@
+# Bu dosyayı "local.properties" olarak kopyalayın ve sdk.dir'i güncelleyin
+# Windows:
+sdk.dir=C\:\\Users\\KULLANICI_ADINIZ\\AppData\\Local\\Android\\Sdk
+# macOS/Linux:
+# sdk.dir=/Users/KULLANICI_ADINIZ/Library/Android/sdk
