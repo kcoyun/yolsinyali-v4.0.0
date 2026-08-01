@@ -1,0 +1,352 @@
+<!DOCTYPE html>
+<html lang="tr">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <meta name="theme-color" content="#060810"/>
+  <title>YolSinyali</title>
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+  <script src="https://cdn.socket.io/4.7.4/socket.io.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; -webkit-tap-highlight-color: transparent; }
+    html, body { margin: 0; padding: 0; height: 100%; width: 100%; overflow: hidden;
+      background: #060810; font-family: -apple-system, 'Segoe UI', sans-serif; }
+
+    /* Map tam ekran arka planda */
+    #map { position: fixed; inset: 0; z-index: 0; }
+
+    /* Leaflet */
+    .leaflet-popup-content-wrapper {
+      background: rgba(15,23,42,0.96); color: #e2e8f0;
+      border: 1px solid rgba(59,130,246,0.3); border-radius: 14px; backdrop-filter: blur(12px); }
+    .leaflet-popup-tip { background: rgba(15,23,42,0.96); }
+    .leaflet-control-attribution { background: rgba(6,8,16,0.7)!important; color: #374151!important; font-size:10px!important; }
+    .leaflet-control-zoom { margin-right:12px!important; margin-bottom:90px!important; }
+    .leaflet-control-zoom a {
+      background:rgba(15,23,42,0.9)!important; color:#93c5fd!important;
+      border-color:rgba(59,130,246,0.25)!important; width:36px!important; height:36px!important;
+      line-height:36px!important; font-size:18px!important; border-radius:10px!important; }
+
+    /* Glass */
+    .glass {
+      background: rgba(10,18,36,0.90);
+      backdrop-filter: blur(16px); -webkit-backdrop-filter: blur(16px);
+      border: 1px solid rgba(59,130,246,0.18);
+    }
+
+    /* ── KRİTİK: UI katmanı pointer-events YOK, sadece içindeki .ui-el elemanlar tıklanabilir ── */
+    #ui-layer {
+      position: fixed; inset: 0; z-index: 100;
+      pointer-events: none; /* harita tıklamalarını geçir */
+    }
+    /* Tıklanabilir UI elemanları */
+    .ui-el { pointer-events: all; }
+
+    /* Login */
+    #login-screen {
+      position: fixed; inset: 0; z-index: 1000;
+      background: linear-gradient(160deg,#060810,#0b1428,#060810);
+      display: flex; align-items: center; justify-content: center; padding: 16px;
+      pointer-events: all;
+    }
+    #login-screen.hidden { display: none; }
+
+    /* Top bar */
+    #topbar {
+      position: absolute; top: 8px; left: 8px; right: 8px;
+      height: 52px; border-radius: 16px;
+      display: flex; align-items: center; padding: 0 12px; gap: 8px;
+    }
+
+    /* Paneller */
+    .panel {
+      position: absolute;
+      border-radius: 16px;
+      overflow-y: auto; overflow-x: hidden;
+      max-height: calc(100vh - 140px);
+    }
+
+    /* Desktop: yan yana */
+    @media (min-width: 768px) {
+      #radar-panel     { top: 68px; right: 8px; width: 280px; }
+      #territory-panel { top: 68px; left: 8px;  width: 280px; }
+    }
+    /* Mobile: tam genişlik alt */
+    @media (max-width: 767px) {
+      #radar-panel, #territory-panel {
+        top: 68px; left: 8px; right: 8px;
+        max-height: 52vh;
+      }
+    }
+
+    /* Bottom bar */
+    #bottombar {
+      position: absolute; bottom: 8px; left: 8px; right: 8px;
+      height: 60px; border-radius: 16px;
+      display: flex; align-items: center; justify-content: center;
+      gap: 0; padding: 0 8px;
+      padding-bottom: env(safe-area-inset-bottom, 0px);
+    }
+
+    /* Inputs */
+    input[type="text"], input[type="url"] {
+      background: rgba(20,30,50,0.95);
+      border: 1px solid rgba(59,130,246,0.25);
+      color: #e2e8f0; outline: none;
+      transition: border-color .2s, box-shadow .2s;
+      -webkit-appearance: none;
+    }
+    input:focus { border-color: rgba(59,130,246,0.7); box-shadow: 0 0 0 3px rgba(59,130,246,0.1); }
+    input::placeholder { color: #475569; }
+
+    /* Animasyonlar */
+    @keyframes ripple { 0%{transform:scale(1);opacity:.8} 100%{transform:scale(3.5);opacity:0} }
+    @keyframes pulse-dot { 0%,100%{transform:scale(1)} 50%{transform:scale(1.2)} }
+    @keyframes alarm-flash { 0%,100%{box-shadow:0 0 0 0 rgba(239,68,68,0)} 50%{box-shadow:0 0 20px 6px rgba(239,68,68,.55)} }
+    @keyframes fadein { from{opacity:0;transform:translateY(-6px)} to{opacity:1;transform:translateY(0)} }
+    .pulse-dot { animation: pulse-dot 1.5s ease-in-out infinite; }
+    .alarm-active { animation: alarm-flash .75s ease-in-out infinite; }
+
+    /* No scrollbar */
+    .no-scroll::-webkit-scrollbar { display: none; }
+    .no-scroll { -ms-overflow-style:none; scrollbar-width:none; }
+
+    /* Butonlar */
+    .btn { cursor:pointer; user-select:none; -webkit-user-select:none; touch-action:manipulation; transition: opacity .15s; }
+    .btn:active { opacity:.75; }
+
+    /* Icon buton */
+    .icon-btn {
+      width:40px; height:40px; border-radius:12px;
+      display:flex; align-items:center; justify-content:center;
+      transition: background .15s;
+    }
+    .icon-btn:hover { background:rgba(59,130,246,0.15); }
+
+    /* Toast */
+    #toast {
+      position: fixed; bottom: 80px; left: 50%; transform: translateX(-50%);
+      z-index: 900; pointer-events: none;
+      transition: opacity .3s; opacity: 0;
+      white-space: nowrap; max-width: 85vw; white-space: normal; text-align:center;
+    }
+    #toast.show { opacity: 1; }
+
+    /* Modal */
+    #territory-modal {
+      position: fixed; inset: 0; z-index: 2000;
+      display: flex; align-items: flex-end; justify-content: center;
+      background: rgba(0,0,0,0.65); backdrop-filter: blur(8px);
+      padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom));
+      pointer-events: all;
+    }
+    #territory-modal.hidden { display:none; }
+    .modal-card { width:100%; max-width:420px; animation: fadein .2s ease; }
+
+    /* Bottom bar bölücü */
+    .bar-div { width:1px; height:32px; background:rgba(148,163,184,0.15); flex-shrink:0; }
+
+    /* Territory çizgi stili */
+    .territory-drawing-hint {
+      position: absolute; top: 68px; left: 50%; transform: translateX(-50%);
+      pointer-events: none;
+      animation: fadein .3s ease;
+      white-space: nowrap;
+    }
+  </style>
+</head>
+<body>
+
+<!-- ── Harita ── -->
+<div id="map"></div>
+
+<!-- ── Login ── -->
+<div id="login-screen">
+  <div class="glass rounded-3xl p-8 w-full max-w-sm shadow-2xl">
+    <div class="flex flex-col items-center mb-7">
+      <div class="w-16 h-16 rounded-2xl bg-gradient-to-br from-blue-500 to-blue-700 flex items-center justify-center mb-4 shadow-xl shadow-blue-900/50">
+        <svg class="w-9 h-9 text-white" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M17.657 16.657L13.414 20.9a1.998 1.998 0 01-2.827 0l-4.244-4.243a8 8 0 1111.314 0z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 11a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </div>
+      <h1 class="text-2xl font-bold text-white">YolSinyali</h1>
+      <p class="text-slate-400 text-sm mt-1">Canlı Konum &amp; Bölge Sistemi</p>
+    </div>
+    <div class="space-y-4">
+      <div>
+        <label class="block text-slate-400 text-xs font-semibold mb-1.5 uppercase tracking-widest">Kullanıcı Adı</label>
+        <input id="login-username" type="text" placeholder="Adınızı girin"
+          class="w-full rounded-xl px-4 py-3.5 text-sm" autocomplete="off" autocorrect="off" autocapitalize="off"/>
+      </div>
+      <div>
+        <label class="block text-slate-400 text-xs font-semibold mb-1.5 uppercase tracking-widest">Sunucu URL</label>
+        <input id="login-server-url" type="url" placeholder="https://yolsinyali-xxxx.onrender.com"
+          class="w-full rounded-xl px-4 py-3.5 text-sm font-mono" autocorrect="off" autocapitalize="off"/>
+      </div>
+      <button onclick="handleLogin()"
+        class="btn w-full bg-gradient-to-r from-blue-600 to-blue-500 hover:from-blue-500 hover:to-blue-400
+          text-white font-semibold py-3.5 rounded-xl shadow-lg shadow-blue-900/40 text-sm">
+        Başla &amp; Konumu Paylaş 🚀
+      </button>
+    </div>
+    <p class="text-slate-600 text-xs text-center mt-5">GPS konumunuz şifreli paylaşılır</p>
+  </div>
+</div>
+
+<!-- ── UI Katmanı (pointer-events:none — sadece .ui-el tıklanır) ── -->
+<div id="ui-layer">
+
+  <!-- TOP BAR -->
+  <div id="topbar" class="glass ui-el">
+    <div class="flex items-center gap-2 flex-1 min-w-0">
+      <div class="w-2 h-2 rounded-full bg-emerald-400 pulse-dot flex-shrink-0"></div>
+      <span class="text-white font-semibold text-sm truncate" id="topbar-username">—</span>
+      <span class="text-slate-500 text-xs flex-shrink-0" id="online-count">0 kişi</span>
+    </div>
+    <div class="flex items-center gap-1">
+      <button onclick="togglePanel('radar-panel')" class="btn icon-btn text-blue-400" title="Radar Listesi">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <circle cx="12" cy="12" r="3" stroke-width="2"/>
+          <path stroke-linecap="round" stroke-width="2" d="M5.6 5.6a9 9 0 0 0 0 12.8M18.4 5.6a9 9 0 0 1 0 12.8M8.5 8.5a5 5 0 0 0 0 7M15.5 8.5a5 5 0 0 1 0 7"/>
+        </svg>
+      </button>
+      <button onclick="togglePanel('territory-panel')" class="btn icon-btn text-purple-400" title="Bölge Sistemi">
+        <svg class="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+            d="M9 20l-5.447-2.724A1 1 0 013 16.382V5.618a1 1 0 011.447-.894L9 7m0 13l6-3m-6 3V7m6 10l4.553 2.276A1 1 0 0021 18.382V7.618a1 1 0 00-.553-.894L15 4m0 13V4m0 0L9 7"/>
+        </svg>
+      </button>
+      <button onclick="sendSOSWhatsApp()"
+        class="btn bg-green-600 hover:bg-green-500 text-white text-xs font-bold px-3 py-1.5 rounded-lg ml-1">
+        SOS
+      </button>
+    </div>
+  </div>
+
+  <!-- RADAR PANELİ -->
+  <div id="radar-panel" class="panel glass ui-el p-4" style="display:none;">
+    <div class="flex items-center justify-between mb-3">
+      <h2 class="text-white font-bold text-sm flex items-center gap-2">
+        <span class="w-2 h-2 rounded-full bg-blue-400 inline-block"></span> Radar Listesi
+      </h2>
+      <button onclick="togglePanel('radar-panel')" class="btn text-slate-500 hover:text-white text-xl leading-none w-7 h-7 flex items-center justify-center">×</button>
+    </div>
+    <div class="flex gap-2 mb-3">
+      <input id="friend-input" type="text" placeholder="Kullanıcı adı"
+        class="flex-1 rounded-xl px-3 py-2.5 text-sm" autocomplete="off"
+        onkeydown="if(event.key==='Enter')addFriend()"/>
+      <button onclick="addFriend()" class="btn bg-blue-600 hover:bg-blue-500 text-white text-sm px-4 rounded-xl font-semibold">Ekle</button>
+    </div>
+    <div class="mb-4">
+      <div class="flex items-center justify-between mb-1.5">
+        <span class="text-slate-400 text-xs">Yakınlık Alarmı</span>
+        <span id="alarm-label" class="text-blue-400 text-xs font-medium">500 m</span>
+      </div>
+      <input id="alarm-distance" type="range" min="100" max="5000" value="500" step="100"
+        class="w-full accent-blue-500" oninput="updateAlarmLabel()"/>
+    </div>
+    <div id="friend-list" class="no-scroll space-y-1.5">
+      <p class="text-slate-500 text-xs text-center py-3">Henüz takip edilen yok.</p>
+    </div>
+  </div>
+
+  <!-- BÖLGE PANELİ -->
+  <div id="territory-panel" class="panel glass ui-el p-4" style="display:none;">
+    <div class="flex items-center justify-between mb-1">
+      <h2 class="text-white font-bold text-sm flex items-center gap-2">
+        <span class="text-purple-400 text-base">⬡</span> Bölge Sistemi
+      </h2>
+      <button onclick="togglePanel('territory-panel')" class="btn text-slate-500 hover:text-white text-xl leading-none w-7 h-7 flex items-center justify-center">×</button>
+    </div>
+    <p class="text-slate-500 text-xs mb-3 leading-relaxed">
+      Yürüyerek bölge çiz, başlangıca dönünce otomatik kapanır.<br>
+      Rakip bölgesinin <span class="text-slate-300 font-medium">merkezine</span> git → ele geçir!
+    </p>
+
+    <button id="territory-btn" onclick="toggleTerritoryDrawing()"
+      class="btn w-full bg-purple-700 hover:bg-purple-600 active:bg-purple-800
+        text-white text-sm font-semibold py-3 rounded-xl mb-3">
+      🗺 Bölge Çizmeye Başla
+    </button>
+
+    <!-- Çizim durumu -->
+    <div id="territory-status" style="display:none;"
+      class="rounded-xl bg-purple-900/30 border border-purple-500/20 p-3 mb-3 text-xs space-y-1.5">
+      <div class="flex justify-between"><span class="text-slate-400">Nokta</span><span class="text-white font-medium" id="territory-points">0</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Mesafe</span><span class="text-white font-medium" id="territory-dist">0 m</span></div>
+      <div class="flex justify-between"><span class="text-slate-400">Başlangıca</span><span class="text-emerald-400 font-medium" id="dist-to-start">—</span></div>
+      <div class="text-slate-600 text-xs pt-1 border-t border-slate-700/50">30m içine gir → otomatik kapanır ✓</div>
+    </div>
+
+    <p class="text-slate-500 text-xs font-semibold uppercase tracking-widest mb-2">Bölgelerim</p>
+    <div id="territory-list" class="no-scroll space-y-1.5">
+      <p class="text-slate-600 text-xs text-center py-3">Henüz bölgen yok.</p>
+    </div>
+  </div>
+
+  <!-- BOTTOM BAR -->
+  <div id="bottombar" class="glass ui-el">
+    <button onclick="centerOnMe()" class="btn flex-1 flex items-center justify-center gap-2 text-white text-sm font-medium py-2 rounded-xl hover:bg-white/5">
+      <svg class="w-4 h-4 text-blue-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M12 2a10 10 0 1 0 10 10A10 10 0 0 0 12 2zm1 17.93V18a1 1 0 0 0-2 0v1.93A8 8 0 0 1 4.07 13H6a1 1 0 0 0 0-2H4.07A8 8 0 0 1 11 4.07V6a1 1 0 0 0 2 0V4.07A8 8 0 0 1 19.93 11H18a1 1 0 0 0 0 2h1.93A8 8 0 0 1 13 19.93z"/>
+      </svg>
+      <span class="hidden sm:inline">Konumuma Git</span>
+      <span class="sm:hidden">Git</span>
+    </button>
+    <div class="bar-div"></div>
+    <button onclick="togglePanel('territory-panel')" class="btn flex-1 flex items-center justify-center gap-2 text-white text-sm font-medium py-2 rounded-xl hover:bg-white/5">
+      <span class="text-purple-400 text-lg leading-none">⬡</span>
+      <span class="hidden sm:inline">Bölge Çiz</span>
+      <span class="sm:hidden">Bölge</span>
+    </button>
+    <div class="bar-div"></div>
+    <button onclick="sendSOSWhatsApp()" class="btn flex-1 flex items-center justify-center gap-2 text-white text-sm font-medium py-2 rounded-xl hover:bg-green-900/20">
+      <svg class="w-4 h-4 text-green-400 flex-shrink-0" fill="currentColor" viewBox="0 0 24 24">
+        <path d="M12.04 2C6.58 2 2.13 6.45 2.13 11.91c0 1.75.46 3.45 1.32 4.95L2.05 22l5.25-1.38c1.45.79 3.08 1.21 4.74 1.21 5.46 0 9.91-4.45 9.91-9.91 0-2.65-1.03-5.14-2.9-7.01A9.816 9.816 0 0 0 12.04 2zm4.96 13.44c-.2.56-1.16 1.08-1.6 1.14-.4.06-.91.09-1.47-.09-.34-.11-.78-.26-1.33-.51-2.33-1.01-3.85-3.37-3.97-3.53-.11-.16-.93-1.24-.93-2.36 0-1.12.59-1.67.8-1.9.21-.23.46-.29.61-.29l.44.01c.14 0 .33-.05.52.4.19.45.65 1.59.71 1.71.06.11.1.25.02.4-.08.15-.12.24-.24.37-.12.13-.25.28-.36.38-.12.11-.24.23-.1.45.14.22.62.97 1.34 1.57.92.78 1.7 1.02 1.93 1.13.24.12.38.1.52-.06.14-.16.6-.7.76-.94.16-.24.32-.2.54-.12.22.08 1.4.66 1.64.78.24.12.4.18.46.28.06.1.06.58-.14 1.14z"/>
+      </svg>
+      <span class="hidden sm:inline">WhatsApp SOS</span>
+      <span class="sm:hidden">SOS</span>
+    </button>
+  </div>
+
+  <!-- ALARM BANNER -->
+  <div id="alarm-banner" class="ui-el" style="display:none;position:absolute;top:68px;left:8px;right:8px;z-index:200;">
+    <div class="glass rounded-2xl p-4 text-center alarm-active">
+      <p class="text-red-400 font-bold text-sm" id="alarm-text">⚠️ Arkadaşın yakında!</p>
+      <button onclick="dismissAlarm()" class="btn text-slate-500 text-xs mt-1 hover:text-slate-300">Kapat</button>
+    </div>
+  </div>
+
+</div><!-- /ui-layer -->
+
+<!-- TOAST (ui-layer dışında, kendi z-index'i var) -->
+<div id="toast" class="glass rounded-2xl px-5 py-3 text-white text-sm font-medium shadow-xl"></div>
+
+<!-- BÖLGE MODALİ (ui-layer dışında) -->
+<div id="territory-modal" class="hidden">
+  <div class="modal-card glass rounded-3xl p-6 shadow-2xl">
+    <div class="text-center mb-5">
+      <div class="w-12 h-12 rounded-2xl bg-purple-600/20 border border-purple-500/30 flex items-center justify-center mx-auto mb-3 text-2xl">🗺</div>
+      <h3 class="text-white font-bold text-lg">Bölge Tamamlandı!</h3>
+      <p class="text-slate-400 text-sm mt-1">Bölgeye bir isim ver</p>
+    </div>
+    <input id="territory-name-input" type="text"
+      placeholder="ör: Mahallemiz, Futbol Sahası..."
+      class="w-full rounded-xl px-4 py-3.5 text-sm mb-4" autocomplete="off"
+      onkeydown="if(event.key==='Enter')saveTerritoryFromModal()"/>
+    <div class="flex gap-3">
+      <button onclick="cancelTerritoryModal()" class="btn flex-1 bg-slate-700/80 hover:bg-slate-700 text-white py-3 rounded-xl text-sm">İptal</button>
+      <button onclick="saveTerritoryFromModal()" class="btn flex-1 bg-purple-600 hover:bg-purple-500 text-white py-3 rounded-xl text-sm font-semibold">Kaydet ✓</button>
+    </div>
+  </div>
+</div>
+
+<script src="app.js"></script>
+</body>
+</html>
